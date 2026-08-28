@@ -79,7 +79,7 @@ Error status codes used throughout: `400` for missing/invalid input (empty usern
 
 ## Documenting Assumptions
 
-Q: For `GET /cases?claimedBy=...` - what if the username doesn't match any employee?
+Q: For GET /cases?claimedBy=..., what if the username doesn't match any employee?
 Assumption: Returns an empty array rather than a 404/400, consistent with a filter that simply matches nothing.
 
 Q: Should usernames have length limits, character restrictions, or a specific format?
