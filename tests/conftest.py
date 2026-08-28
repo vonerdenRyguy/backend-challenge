@@ -1,37 +1,25 @@
+import os
+import tempfile
+
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
 
-from app.database import Base, get_db
-from app.main import app
+_fd, _TEST_DB_PATH = tempfile.mkstemp(suffix=".db")
+os.close(_fd)
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 
-TEST_DATABASE_URL = "sqlite:///./test.db"
+from fastapi.testclient import TestClient  # noqa: E402
 
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from app.database import Base, engine  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture()
-def db_session():
+def reset_db():
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture()
-def client(db_session):
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
+def client(reset_db):
     with TestClient(app) as c:
         yield c
-    app.dependency_overrides.clear()

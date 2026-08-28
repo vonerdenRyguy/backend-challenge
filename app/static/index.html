@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sirona Case Queue — Test UI</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161d2e;
+    --border: #2a3448;
+    --text: #e7ebf3;
+    --muted: #8b95ab;
+    --accent: #4f8cff;
+    --ok: #3ecf8e;
+    --warn: #f5a623;
+    --err: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .filters { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  select, input, textarea, button {
+    background: #0d1220;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button {
+    background: var(--accent);
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.secondary { background: #2a3448; }
+  button.danger { background: var(--err); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .badge { padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; display: inline-block; }
+  .badge.PENDING { background: rgba(245,166,35,.15); color: var(--warn); }
+  .badge.IN_PROGRESS { background: rgba(79,140,255,.15); color: var(--accent); }
+  .badge.COMPLETED { background: rgba(62,207,142,.15); color: var(--ok); }
+  .action-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .report-text { max-width: 260px; color: var(--muted); font-size: 12px; }
+  #toast {
+    position: fixed; top: 16px; right: 16px; max-width: 360px;
+    padding: 10px 14px; border-radius: 8px; font-size: 13px;
+    display: none; z-index: 10; box-shadow: 0 4px 20px rgba(0,0,0,.4);
+  }
+  #toast.ok { background: var(--ok); color: #06281a; display: block; }
+  #toast.err { background: var(--err); color: #2a0508; display: block; }
+  .add-row { display: flex; gap: 8px; margin-top: 12px; }
+  .muted { color: var(--muted); }
+  textarea { width: 100%; min-height: 50px; resize: vertical; }
+</style>
+</head>
+<body>
+
+<h1>Sirona Case Queue</h1>
+<p class="subtitle">Manual test UI — talks to this same API (<code>/cases</code>, <code>/employees</code>). Not part of the graded submission.</p>
+
+<div id="toast"></div>
+
+<div class="panel">
+  <h2>Cases</h2>
+  <div class="filters">
+    <label class="muted">Status
+      <select id="filterStatus">
+        <option value="">All</option>
+        <option value="PENDING">PENDING</option>
+        <option value="IN_PROGRESS">IN_PROGRESS</option>
+        <option value="COMPLETED">COMPLETED</option>
+      </select>
+    </label>
+    <label class="muted">Claimed by
+      <select id="filterClaimedBy"><option value="">All</option></select>
+    </label>
+    <button class="secondary" onclick="loadCases()">Refresh</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Patient</th><th>Modality</th><th>Study Date</th>
+        <th>Status</th><th>Claimed By</th><th>Report</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="casesBody"></tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Employees</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Username</th><th>Actions</th></tr></thead>
+    <tbody id="employeesBody"></tbody>
+  </table>
+  <div class="add-row">
+    <input id="newUsername" placeholder="new username">
+    <button onclick="createEmployee()">Add employee</button>
+  </div>
+</div>
+
+<script>
+let employees = [];
+
+function toast(message, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = message;
+  t.className = ok ? 'ok' : 'err';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let body = null;
+  try { body = await res.json(); } catch (e) {}
+  if (!res.ok) {
+    const detail = body && body.detail ? body.detail : res.statusText;
+    throw { status: res.status, detail, body };
+  }
+  return body;
+}
+
+async function loadEmployees() {
+  employees = await api('/employees');
+  const body = document.getElementById('employeesBody');
+  body.innerHTML = '';
+  const filterSelect = document.getElementById('filterClaimedBy');
+  filterSelect.innerHTML = '<option value="">All</option>' +
+    employees.map(e => `<option value="${e.username}">${e.username}</option>`).join('');
+
+  for (const emp of employees) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${emp.id}</td>
+      <td><input value="${emp.username}" id="uname-${emp.id}" style="width:140px"></td>
+      <td class="action-row">
+        <button class="secondary" onclick="updateEmployee(${emp.id})">Save</button>
+        <button class="danger" onclick="deleteEmployee(${emp.id}, false)">Delete</button>
+      </td>`;
+    body.appendChild(tr);
+  }
+}
+
+async function createEmployee() {
+  const input = document.getElementById('newUsername');
+  try {
+    await api('/employees', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: input.value })
+    });
+    input.value = '';
+    toast('Employee created', true);
+    await loadEmployees();
+  } catch (e) {
+    toast(`${e.status}: ${e.detail}`, false);
+  }
+}
+
+async function updateEmployee(id) {
+  const username = document.getElementById(`uname-${id}`).value;
+  try {
+    await api(`/employees/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    });
+    toast('Employee updated', true);
+    await loadEmployees();
+    await loadCases();
+  } catch (e) {
+    toast(`${e.status}: ${e.detail}`, false);
+  }
+}
+
+async function deleteEmployee(id, force) {
+  try {
+    await api(`/employees/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' });
+    toast('Employee deleted', true);
+    await loadEmployees();
+    await loadCases();
+  } catch (e) {
+    if (e.status === 409 && !force) {
+      if (confirm(`${e.detail}\n\nDelete anyway and clear their claims?`)) {
+        await deleteEmployee(id, true);
+      }
+    } else {
+      toast(`${e.status}: ${e.detail}`, false);
+    }
+  }
+}
+
+async function loadCases() {
+  const status = document.getElementById('filterStatus').value;
+  const claimedBy = document.getElementById('filterClaimedBy').value;
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (claimedBy) params.set('claimedBy', claimedBy);
+
+  const cases = await api('/cases' + (params.toString() ? '?' + params.toString() : ''));
+  const body = document.getElementById('casesBody');
+  body.innerHTML = '';
+
+  for (const c of cases) {
+    const tr = document.createElement('tr');
+    let actionsHtml = '';
+
+    if (c.status === 'PENDING') {
+      actionsHtml = `
+        <select id="claim-emp-${c.id}">
+          ${employees.map(e => `<option value="${e.username}">${e.username}</option>`).join('')}
+        </select>
+        <button onclick="claimCase(${c.id})">Claim</button>`;
+    } else if (c.status === 'IN_PROGRESS') {
+      actionsHtml = `
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:220px">
+          <select id="report-emp-${c.id}">
+            ${employees.map(e => `<option value="${e.username}" ${e.username === c.claimedBy ? 'selected' : ''}>${e.username}</option>`).join('')}
+          </select>
+          <textarea id="report-text-${c.id}" placeholder="report text"></textarea>
+          <button onclick="submitReport(${c.id})">Submit report</button>
+        </div>`;
+    } else {
+      actionsHtml = '<span class="muted">done</span>';
+    }
+
+    tr.innerHTML = `
+      <td>${c.id}</td>
+      <td>${c.patientName}</td>
+      <td>${c.modality}</td>
+      <td>${c.studyDate}</td>
+      <td><span class="badge ${c.status}">${c.status}</span></td>
+      <td>${c.claimedBy ?? '<span class="muted">—</span>'}</td>
+      <td class="report-text">${c.report ?? '<span class="muted">—</span>'}</td>
+      <td class="action-row">${actionsHtml}</td>`;
+    body.appendChild(tr);
+  }
+}
+
+async function claimCase(id) {
+  const claimedBy = document.getElementById(`claim-emp-${id}`).value;
+  try {
+    await api(`/cases/${id}/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claimedBy })
+    });
+    toast(`Case ${id} claimed`, true);
+    await loadCases();
+  } catch (e) {
+    toast(`${e.status}: ${e.detail}`, false);
+  }
+}
+
+async function submitReport(id) {
+  const author = document.getElementById(`report-emp-${id}`).value;
+  const report = document.getElementById(`report-text-${id}`).value;
+  try {
+    await api(`/cases/${id}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author, report })
+    });
+    toast(`Report submitted for case ${id}`, true);
+    await loadCases();
+  } catch (e) {
+    toast(`${e.status}: ${e.detail}`, false);
+  }
+}
+
+document.getElementById('filterStatus').addEventListener('change', loadCases);
+document.getElementById('filterClaimedBy').addEventListener('change', loadCases);
+
+(async function init() {
+  await loadEmployees();
+  await loadCases();
+})();
+</script>
+</body>
+</html>
